@@ -2,7 +2,7 @@ import nano from "nano"
 import crypto from "crypto"
 import { customAlphabet } from "nanoid"
 import { connect, NatsConnectionOptions, Payload } from "ts-nats"
-import mongoose from "mongoose"
+import { MongoClient, ObjectID } from "mongodb"
 import {
   ResearcherRepository,
   StudyRepository,
@@ -42,22 +42,21 @@ import {
   CredentialInterface,
   TypeInterface,
 } from "./interface/RepositoryInterface"
-import { adminCredential } from "../model/Credential"
-import  ioredis  from "ioredis"
-
-export let RedisClient: ioredis.Redis | undefined 
-
+import ioredis from "ioredis"
+import { initializeQueues } from "../utils/queue/Queue"
+export let RedisClient: ioredis.Redis | undefined
+export let MongoClientDB: any
 //initialize driver for db
-let DB_DRIVER:string = ''
+let DB_DRIVER = ""
 //Identifying the Database driver -- IF the DB in env starts with mongodb://, create mongodb connection
-                                 //--ELSEIF the DB/CDB in env starts with http or https, create couch db connection
+//--ELSEIF the DB/CDB in env starts with http or https, create couch db connection
 if (process.env.DB?.startsWith("mongodb://")) {
   DB_DRIVER = "mongodb"
 } else if (process.env.DB?.startsWith("http") || process.env.DB?.startsWith("https")) {
-   DB_DRIVER = "couchdb"
-   console.log(`COUCHDB adapter in use `)
+  DB_DRIVER = "couchdb"
+  console.log(`COUCHDB adapter in use `)
 } else {
-  if (process.env.CDB?.startsWith("http") || process.env.CDB?.startsWith("https")) {   
+  if (process.env.CDB?.startsWith("http") || process.env.CDB?.startsWith("https")) {
     DB_DRIVER = "couchdb"
     console.log(`COUCHDB adapter in use `)
   } else {
@@ -67,13 +66,15 @@ if (process.env.DB?.startsWith("mongodb://")) {
 
 //IF the DB/CDB in env starts with http or https, create and export couch db connection
 export const Database: any =
-  (process.env.DB?.startsWith("http") || process.env.DB?.startsWith("https")) ? nano(process.env.DB ?? "") : 
-  (process.env.CDB?.startsWith("http") || process.env.CDB?.startsWith("https")) ? nano(process.env.CDB ?? ""):""
+  process.env.DB?.startsWith("http") || process.env.DB?.startsWith("https")
+    ? nano(process.env.DB ?? "")
+    : process.env.CDB?.startsWith("http") || process.env.CDB?.startsWith("https")
+    ? nano(process.env.CDB ?? "")
+    : ""
 
 export const uuid = customAlphabet("1234567890abcdefghjkmnpqrstvwxyz", 20)
 export const numeric_uuid = (): string => `U${Math.random().toFixed(10).slice(2, 12)}`
 //Initialize redis client for cacheing purpose
-
 
 /**
  * If the data could not be encrypted or is invalid, returns `undefined`.
@@ -116,7 +117,8 @@ export const Decrypt = (data: string, mode: "Rijndael" | "AES256" = "Rijndael"):
 // Initialize the CouchDB databases if any of them do not exist.
 export async function Bootstrap(): Promise<void> {
   if (typeof process.env.REDIS_HOST === "string") {
-    RedisClient = new ioredis(
+    initializeQueues()
+    RedisClient = new ioredis(      
       parseInt(`${(process.env.REDIS_HOST as any).match(/([0-9]+)/g)?.[0]}`),
       process.env.REDIS_HOST.match(/\/\/([0-9a-zA-Z._]+)/g)?.[0]
     )
@@ -772,10 +774,157 @@ export async function Bootstrap(): Promise<void> {
     console.groupEnd()
     console.log("Database verification complete.")
   } else {
-    //MongoDB connection
-    await mongoose.connect(`${process.env.DB}`, { useUnifiedTopology: true, useNewUrlParser: true } ?? "")
-    console.log(`MONGODB adapter in use`)
-    await adminCredential()
+      
+    //Connect to mongoDB
+    const client = new MongoClient(`${process.env.DB}`, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    })
+    try {
+      await client.connect()
+    } catch (error) {
+      console.dir(error)
+    }
+    // return new Promise((resolve, reject) => {
+    try {
+      console.group("Initializing database connection...")
+      if (client.isConnected()) {
+        const db = process.env.DB?.split("/").reverse()[0]?.split("?")[0]
+        MongoClientDB = await client?.db(db)
+      } else {
+        console.log("Database connection failed.")
+      }
+    } catch (error) {
+      console.log("Database connection failed.")
+    }
+    //  })
+    if (!!MongoClientDB) {
+      console.group(`MONGODB adapter in use`)
+      const DBs = await MongoClientDB.listCollections().toArray()
+      const dbs: string[] = []
+      for (const db of DBs) {
+        await dbs.push(db.name)
+      }
+        
+      // Preparing Mongo Collections
+      if (!dbs.includes("activity_spec")) {
+        console.log("Initializing ActivitySpec database...")
+        await MongoClientDB.createCollection("activity_spec")
+        const database = await MongoClientDB.collection("activity_spec")
+        await database.createIndex({ timestamp: 1 })
+      }
+      console.log("ActivitySpec database online.")
+      if (!dbs.includes("sensor_spec")) {
+        console.log("Initializing SensorSpec database...")
+        await MongoClientDB.createCollection("sensor_spec")
+        const database = await MongoClientDB.collection("sensor_spec")
+        await database.createIndex({ timestamp: 1 })
+      }
+      console.log("SensorSpec database online.")
+      if (!dbs.includes("researcher")) {
+        console.log("Initializing Researcher database...")
+        await MongoClientDB.createCollection("researcher")
+        const database = MongoClientDB.collection("researcher")
+        await database.createIndex({ _id: 1, _parent: 1, timestamp: 1 })
+        await database.createIndex({ _parent: 1, timestamp: 1 })
+        await database.createIndex({ timestamp: 1 })
+      }
+      console.log("Researcher database online.")
+      if (!dbs.includes("study")) {
+        console.log("Initializing Study database...")
+        await MongoClientDB.createCollection("study")
+        const database = MongoClientDB.collection("study")
+        await database.createIndex({ _id: 1, _parent: 1, timestamp: 1 })
+        await database.createIndex({ _parent: 1, timestamp: 1 })
+        await database.createIndex({ timestamp: 1 })
+      }
+
+      console.log("Study database online.")
+      if (!dbs.includes("participant")) {
+        console.log("Initializing Participant database...")
+        await MongoClientDB.createCollection("participant")
+        const database = MongoClientDB.collection("participant")
+        await database.createIndex({ _id: 1, _parent: 1, timestamp: 1 })
+        await database.createIndex({ _parent: 1, timestamp: 1 })
+        await database.createIndex({ timestamp: 1 })
+      }
+      console.log("Participant database online.")
+      if (!dbs.includes("activity")) {
+        console.log("Initializing Activity database...")
+        await MongoClientDB.createCollection("activity")
+        const database = await MongoClientDB.collection("activity")
+        await database.createIndex({ _id: 1, _parent: 1, timestamp: 1 })
+        await database.createIndex({ _parent: 1, timestamp: 1 })
+        await database.createIndex({ timestamp: 1 })
+        await database.createIndex({ _id: 1, timestamp: 1 })
+      }
+      console.log("Activity database online.")
+      if (!dbs.includes("sensor")) {
+        console.log("Initializing Sensor database...")
+        await MongoClientDB.createCollection("sensor")
+        const database = MongoClientDB.collection("sensor")
+        await database.createIndex({ _id: 1, _parent: 1, timestamp: 1 })
+        await database.createIndex({ _parent: 1, timestamp: 1 })
+        await database.createIndex({ timestamp: 1 })
+      }
+      console.log("Sensor database online.")
+      if (!dbs.includes("activity_event")) {
+        console.log("Initializing ActivityEvent database...")
+        await MongoClientDB.createCollection("activity_event")
+        const database = MongoClientDB.collection("activity_event")
+        await database.createIndex({ _parent: -1, activity: -1, timestamp: -1 })
+        await database.createIndex({ _parent: -1, timestamp: -1 })
+      }
+      console.log("ActivityEvent database online.")
+      if (!dbs.includes("sensor_event")) {
+        console.log("Initializing SensorEvent database...")
+        await MongoClientDB.createCollection("sensor_event")
+        const database = MongoClientDB.collection("sensor_event")
+        await database.createIndex({ _parent: -1, sensor: -1, timestamp: -1 })
+        await database.createIndex({ _parent: -1, timestamp: -1 })
+      }
+      console.log("SensorEvent database online.")
+      if (!dbs.includes("tag")) {
+        console.log("Initializing Tag database...")
+        await MongoClientDB.createCollection("tag")
+        const database = MongoClientDB.collection("tag")
+        await database.createIndex({ _parent: 1, type: 1, key: 1 })
+      }
+      console.log("Tag database online.")
+      if (!dbs.includes("credential")) {
+        console.log("Initializing Credential database...")
+        await MongoClientDB.createCollection("credential")
+        const database = MongoClientDB.collection("credential")
+        await database.createIndex({ access_key: 1 })
+        await database.createIndex({ origin: 1 })
+        await database.createIndex({ origin: 1, access_key: 1 })
+        
+        console.dir(`An initial administrator password was generated and saved for this installation.`)
+        try {
+          // Create a new password and emit it to the console while saving it (to share it with the sysadmin).
+          const p = crypto.randomBytes(32).toString("hex")
+          console.table({ "Administrator Password": p })
+          await database.insertOne({
+            _id: new ObjectID(),
+            origin: null,
+            access_key: "admin",
+            secret_key: Encrypt(p, "AES256"),
+            description: "System Administrator Credential",
+            _deleted: false,
+          } as any)
+        } catch (error) {
+          console.log(error)
+        }
+      }
+      console.log("Credential database online.")
+      
+      console.groupEnd()
+      console.groupEnd()
+      console.log("Database verification complete.")
+    } else {
+      console.groupEnd()
+      console.log("Database verification failed.")
+    }
   }
 }
 
