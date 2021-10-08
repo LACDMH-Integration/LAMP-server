@@ -7,7 +7,7 @@ import { Repository } from "../repository/Bootstrap"
 export class SensorService {
   public static _name = "Sensor"
   public static Router = Router()
-  
+
   public static async list(auth: any, study_id: string, ignore_binary: boolean, sibling: boolean = false) {
     const SensorRepository = new Repository().getSensorRepository()
     const TypeRepository = new Repository().getTypeRepository()
@@ -28,17 +28,30 @@ export class SensorService {
     //publishing data for sensor add api with token = study.{study_id}.sensor.{_id}
     sensor.study_id = study_id
     sensor.action = "create"
+    sensor.settings = undefined
     sensor.sensor_id = data
-    PubSubAPIListenerQueue?.add({
-      topic: `sensor`,
-      token: `study.${study_id}.sensor.${data}`,
-      payload: sensor,
-    })
-    PubSubAPIListenerQueue?.add({
-      topic: `study.*.sensor`,
-      token: `study.${study_id}.sensor.${data}`,
-      payload: sensor,
-    })
+    PubSubAPIListenerQueue?.add(
+      {
+        topic: `sensor`,
+        token: `study.${study_id}.sensor.${data}`,
+        payload: sensor,
+      },
+      {
+        removeOnComplete: true,
+        removeOnFail: true,
+      }
+    )
+    PubSubAPIListenerQueue?.add(
+      {
+        topic: `study.*.sensor`,
+        token: `study.${study_id}.sensor.${data}`,
+        payload: sensor,
+      },
+      {
+        removeOnComplete: true,
+        removeOnFail: true,
+      }
+    )
     return data
   }
 
@@ -54,26 +67,44 @@ export class SensorService {
     sensor_id = await _verify(auth, ["self", "sibling", "parent"], sensor_id)
     if (sensor === null) {
       //find the study id before delete, as it cannot be fetched after delete
-      const parent = await TypeRepository._parent(sensor_id) as any
+      const parent = (await TypeRepository._parent(sensor_id)) as any
       const data = await SensorRepository._delete(sensor_id)
 
       //publishing data for participant delete api for the Token study.{study_id}.sensor.{sensor_id}
       if (parent !== undefined && parent !== "") {
-        PubSubAPIListenerQueue?.add({
-          topic: `study.*.sensor`,
-          token: `study.${parent["Study"]}.sensor.${sensor_id}`,
-          payload: { action: "delete", sensor_id: sensor_id, study_id: parent["Study"] },
-        })
-        PubSubAPIListenerQueue?.add({
-          topic: `sensor.*`,
-          token: `study.${parent["Study"]}.sensor.${sensor_id}`,
-          payload: { action: "delete", sensor_id: sensor_id, study_id: parent["Study"] },
-        })
-        PubSubAPIListenerQueue?.add({
-          topic: `sensor`,
-          token: `study.${parent["Study"]}.sensor.${sensor_id}`,
-          payload: { action: "delete", sensor_id: sensor_id, study_id: parent["Study"] },
-        })
+        PubSubAPIListenerQueue?.add(
+          {
+            topic: `study.*.sensor`,
+            token: `study.${parent["Study"]}.sensor.${sensor_id}`,
+            payload: { action: "delete", sensor_id: sensor_id, study_id: parent["Study"] },
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: true,
+          }
+        )
+        PubSubAPIListenerQueue?.add(
+          {
+            topic: `sensor.*`,
+            token: `study.${parent["Study"]}.sensor.${sensor_id}`,
+            payload: { action: "delete", sensor_id: sensor_id, study_id: parent["Study"] },
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: true,
+          }
+        )
+        PubSubAPIListenerQueue?.add(
+          {
+            topic: `sensor`,
+            token: `study.${parent["Study"]}.sensor.${sensor_id}`,
+            payload: { action: "delete", sensor_id: sensor_id, study_id: parent["Study"] },
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: true,
+          }
+        )
       }
       return data
     } else {
@@ -82,9 +113,28 @@ export class SensorService {
       //publishing data for sensor update api (Token will be created in PubSubAPIListenerQueue? consumer, as study for this sensor need to fetched to create token)
       sensor.sensor_id = sensor_id
       sensor.action = "update"
-      PubSubAPIListenerQueue?.add({ topic: `sensor.*`, payload: sensor })
-      PubSubAPIListenerQueue?.add({ topic: `sensor`, payload: sensor })
-      PubSubAPIListenerQueue?.add({ topic: `study.*.sensor`, payload: sensor })
+      sensor.settings = undefined
+      PubSubAPIListenerQueue?.add(
+        { topic: `sensor.*`, payload: sensor },
+        {
+          removeOnComplete: true,
+          removeOnFail: true,
+        }
+      )
+      PubSubAPIListenerQueue?.add(
+        { topic: `sensor`, payload: sensor },
+        {
+          removeOnComplete: true,
+          removeOnFail: true,
+        }
+      )
+      PubSubAPIListenerQueue?.add(
+        { topic: `study.*.sensor`, payload: sensor },
+        {
+          removeOnComplete: true,
+          removeOnFail: true,
+        }
+      )
       return data
     }
   }
@@ -99,8 +149,8 @@ SensorService.Router.post("/study/:study_id/sensor", async (req: Request, res: R
   }
 })
 SensorService.Router.put("/sensor/:sensor_id", async (req: Request, res: Response) => {
-  try {
-    res.json({ data: await SensorService.create(req.get("Authorization"), req.params.sensor_id, req.body) })
+  try {    
+    res.json({ data: await SensorService.set(req.get("Authorization"), req.params.sensor_id, req.body) })
   } catch (e) {
     if (e.message === "401.missing-credentials") res.set("WWW-Authenticate", `Basic realm="LAMP" charset="UTF-8"`)
     res.status(parseInt(e.message.split(".")[0]) || 500).json({ error: e.message })
@@ -126,7 +176,14 @@ SensorService.Router.get("/sensor/:sensor_id", async (req: Request, res: Respons
 })
 SensorService.Router.get("/participant/:participant_id/sensor", async (req: Request, res: Response) => {
   try {
-    let output = { data: await SensorService.list(req.get("Authorization"), req.params.participant_id, req.query.ignore_binary === "true", true) }
+    let output = {
+      data: await SensorService.list(
+        req.get("Authorization"),
+        req.params.participant_id,
+        req.query.ignore_binary === "true",
+        true
+      ),
+    }
     output = typeof req.query.transform === "string" ? jsonata(req.query.transform).evaluate(output) : output
     res.json(output)
   } catch (e) {
@@ -136,7 +193,9 @@ SensorService.Router.get("/participant/:participant_id/sensor", async (req: Requ
 })
 SensorService.Router.get("/study/:study_id/sensor", async (req: Request, res: Response) => {
   try {
-    let output = { data: await SensorService.list(req.get("Authorization"), req.params.study_id, req.query.ignore_binary === "true") }
+    let output = {
+      data: await SensorService.list(req.get("Authorization"), req.params.study_id, req.query.ignore_binary === "true"),
+    }
     output = typeof req.query.transform === "string" ? jsonata(req.query.transform).evaluate(output) : output
     res.json(output)
   } catch (e) {

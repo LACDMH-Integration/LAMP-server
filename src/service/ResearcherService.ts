@@ -22,7 +22,13 @@ export class ResearcherService {
     //publishing data for researcher add api with token = researcher.{_id}
     researcher.action = "create"
     researcher.researcher_id = data
-    PubSubAPIListenerQueue?.add({ topic: `researcher`, token: `researcher.${data}`, payload: researcher })
+    PubSubAPIListenerQueue?.add(
+      { topic: `researcher`, token: `researcher.${data}`, payload: researcher },
+      {
+        removeOnComplete: true,
+        removeOnFail: true,
+      }
+    )
     return data
   }
 
@@ -44,11 +50,17 @@ export class ResearcherService {
         token: `researcher.${researcher_id}`,
         payload: { action: "delete", researcher_id: researcher_id },
       })
-      PubSubAPIListenerQueue?.add({
-        topic: `researcher`,
-        token: `researcher.${researcher_id}`,
-        payload: { action: "delete", researcher_id: researcher_id },
-      })
+      PubSubAPIListenerQueue?.add(
+        {
+          topic: `researcher`,
+          token: `researcher.${researcher_id}`,
+          payload: { action: "delete", researcher_id: researcher_id },
+        },
+        {
+          removeOnComplete: true,
+          removeOnFail: true,
+        }
+      )
       return data
     } else {
       const data = await ResearcherRepository._update(researcher_id, researcher)
@@ -56,8 +68,20 @@ export class ResearcherService {
       //publishing data for researcher update api with token = researcher.{researcher_id}
       researcher.action = "update"
       researcher.researcher_id = researcher_id
-      PubSubAPIListenerQueue?.add({ topic: `researcher.*`, token: `researcher.${researcher_id}`, payload: researcher })
-      PubSubAPIListenerQueue?.add({ topic: `researcher`, token: `researcher.${researcher_id}`, payload: researcher })
+      PubSubAPIListenerQueue?.add(
+        { topic: `researcher.*`, token: `researcher.${researcher_id}`, payload: researcher },
+        {
+          removeOnComplete: true,
+          removeOnFail: true,
+        }
+      )
+      PubSubAPIListenerQueue?.add(
+        { topic: `researcher`, token: `researcher.${researcher_id}`, payload: researcher },
+        {
+          removeOnComplete: true,
+          removeOnFail: true,
+        }
+      )
       return data
     }
   }
@@ -268,7 +292,7 @@ ResearcherService.Router.get("/study/:study_id/_lookup/:lookup/mode/:mode", asyn
         } catch (error) {}
         try {
           //Fetch participant's analytics data i.e mode=1
-          if (mode === 1) {            
+          if (mode === 1) {
             const analytics = await SensorEventRepository._select(
               ParticipantIDs[index].id,
               "lamp.analytics",

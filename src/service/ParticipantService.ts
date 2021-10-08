@@ -35,11 +35,17 @@ export class ParticipantService {
       token: `study.${study_id}.participant.${data.id}`,
       payload: participant,
     })
-    PubSubAPIListenerQueue?.add({
-      topic: `study.*.participant`,
-      token: `study.${study_id}.participant.${data.id}`,
-      payload: participant,
-    })
+    PubSubAPIListenerQueue?.add(
+      {
+        topic: `study.*.participant`,
+        token: `study.${study_id}.participant.${data.id}`,
+        payload: participant,
+      },
+      {
+        removeOnComplete: true,
+        removeOnFail: true,
+      }
+    )
     return data
   }
 
@@ -54,28 +60,45 @@ export class ParticipantService {
     const TypeRepository = new Repository().getTypeRepository()
     participant_id = await _verify(auth, ["self", "sibling", "parent"], participant_id)
     if (participant === null) {
-      participant_id = await _verify(auth, ["self", "sibling", "parent"], participant_id)
       //find the study id before delete, as it cannot be fetched after delete
       const parent = (await TypeRepository._parent(participant_id)) as any
       const data = await ParticipantRepository._delete(participant_id)
 
       //publishing data for participant delete api for the Token study.{study_id}.participant.{participant_id}
       if (parent !== undefined && parent !== "") {
-        PubSubAPIListenerQueue?.add({
-          topic: `study.*.participant`,
-          token: `study.${parent["Study"]}.participant.${participant_id}`,
-          payload: { action: "delete", participant_id: participant_id, study_id: parent["Study"] },
-        })
-        PubSubAPIListenerQueue?.add({
-          topic: `participant.*`,
-          token: `study.${parent["Study"]}.participant.${participant_id}`,
-          payload: { action: "delete", participant_id: participant_id, study_id: parent["Study"] },
-        })
-        PubSubAPIListenerQueue?.add({
-          topic: `participant`,
-          token: `study.${parent["Study"]}.participant.${participant_id}`,
-          payload: { action: "delete", participant_id: participant_id, study_id: parent["Study"] },
-        })
+        PubSubAPIListenerQueue?.add(
+          {
+            topic: `study.*.participant`,
+            token: `study.${parent["Study"]}.participant.${participant_id}`,
+            payload: { action: "delete", participant_id: participant_id, study_id: parent["Study"] },
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: true,
+          }
+        )
+        PubSubAPIListenerQueue?.add(
+          {
+            topic: `participant.*`,
+            token: `study.${parent["Study"]}.participant.${participant_id}`,
+            payload: { action: "delete", participant_id: participant_id, study_id: parent["Study"] },
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: true,
+          }
+        )
+        PubSubAPIListenerQueue?.add(
+          {
+            topic: `participant`,
+            token: `study.${parent["Study"]}.participant.${participant_id}`,
+            payload: { action: "delete", participant_id: participant_id, study_id: parent["Study"] },
+          },
+          {
+            removeOnComplete: true,
+            removeOnFail: true,
+          }
+        )
       }
       return data
     } else {

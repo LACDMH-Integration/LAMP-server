@@ -112,9 +112,8 @@ export class TypeRepository implements TypeInterface {
   public async _get(mode: any, type_id: string, attachment_key: string): Promise<any | undefined> {
     const repo = new Repository()
     const TypeRepository = repo.getTypeRepository()
-    const self_type = await TypeRepository._self_type(type_id)
-    const parents = Object.values(await TypeRepository._parent(type_id)).reverse()
-
+    const self_type = (type_id ===null) ? undefined : await TypeRepository._self_type(type_id)
+    const parents = (type_id ===null) ? new Array : Object.values(await TypeRepository._parent(type_id)).reverse() 
     // All possible conditions to retreive Tags, ordered greatest-to-least priority.
     const conditions = [
       // Explicit parent-ownership. (Ordered greatest-to-least ancestor.)
@@ -134,8 +133,7 @@ export class TypeRepository implements TypeInterface {
     //     multiple keys per-subquery; the difference is almost ~7sec vs. ~150ms.
     for (const condition of conditions) {
       try {
-        const value = await MongoClientDB.collection("tag").find(condition).limit(1).maxTimeMS(60000).toArray()
-        console.log("value", value)
+        const value = await MongoClientDB.collection("tag").find(condition).limit(1).maxTimeMS(60000).toArray()        
         if (value.length > 0) return value.map((x: any) => JSON.parse(x.value))[0]
       } catch (error) {
         console.error(error, `Failed to search Tag index for ${condition._parent}:${condition.type}.`)
@@ -149,8 +147,8 @@ export class TypeRepository implements TypeInterface {
   public async _list(mode: any, type_id: string): Promise<string[]> {
     const repo = new Repository()
     const TypeRepository = repo.getTypeRepository()
-    const self_type = await TypeRepository._self_type(type_id)
-    const parents = Object.values(await TypeRepository._parent(type_id)).reverse()
+    const self_type = (type_id ===null) ? undefined : await TypeRepository._self_type(type_id)
+    const parents = (type_id ===null) ? new Array : Object.values(await TypeRepository._parent(type_id)).reverse()   
     let conditions: any[] = []
     conditions = [
       // Explicit parent-ownership. (Ordered greatest-to-least ancestor.)
